@@ -97,11 +97,11 @@ python scratch/sensor_simulator.py --phase walk
 
 ## Phase 2: Wear OS App Deployment Guide
 
-The native Android app targets Wear OS 3.0 (API 30) to support Samsung Galaxy Watch 4 and newer.
+The native Android app targets modern Wear OS (SDK 34) while maintaining backward compatibility with Galaxy Watch 4 using `minSdk 30`.
 
 ### Prerequisites
 - **Android Studio** (2023.x or newer recommended).
-- **Android SDK Platform 30** installed via SDK Manager (`Tools → SDK Manager`).
+- **Android SDK 34** installed via SDK Manager (`Tools → SDK Manager`) for development, with `minSdk=30` in the build configuration for Galaxy Watch 4 compatibility.
 - **Galaxy Watch 4** connected to the same Wi-Fi network as your workstation.
 
 ### Step-by-Step Deployment
