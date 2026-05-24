@@ -13,7 +13,14 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const WS_URL = "ws://localhost:8000/ws/dashboard";
+const getWsUrl = () => {
+  let host = typeof window !== "undefined" ? window.location.hostname : "127.0.0.1";
+  if (!host || host === "localhost") {
+    host = "127.0.0.1";
+  }
+  return `ws://${host}:8000/ws/dashboard`;
+};
+
 const MAX_HISTORY = 100; // keep last 100 data points (~5 s at 20 Hz)
 const RECONNECT_DELAY_MS = 2000;
 
@@ -27,16 +34,22 @@ export function useWearableStream() {
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
   const unmounted = useRef(false);
+  const closingSocket = useRef(null);
 
   const connect = useCallback(() => {
     if (unmounted.current) return;
     setStatus("connecting");
 
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(getWsUrl());
     wsRef.current = ws;
+    closingSocket.current = null;
 
     ws.onopen = () => {
-      if (unmounted.current) { ws.close(); return; }
+      if (unmounted.current) {
+        closingSocket.current = ws;
+        ws.close();
+        return;
+      }
       setStatus("connected");
     };
 
@@ -77,22 +90,34 @@ export function useWearableStream() {
     };
 
     ws.onclose = () => {
+      if (wsRef.current === ws) {
+        wsRef.current = null;
+      }
+      if (closingSocket.current === ws) {
+        closingSocket.current = null;
+        return;
+      }
       if (unmounted.current) return;
       setStatus("disconnected");
       reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY_MS);
     };
 
     ws.onerror = () => {
-      ws.close();
+      setStatus("disconnected");
     };
   }, []);
 
   useEffect(() => {
+    unmounted.current = false;
     connect();
     return () => {
       unmounted.current = true;
       clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
+      if (wsRef.current) {
+        closingSocket.current = wsRef.current;
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
   }, [connect]);
 

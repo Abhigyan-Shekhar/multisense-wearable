@@ -5,7 +5,13 @@
 
 import { useState, useEffect } from "react";
 
-const API_BASE = "http://localhost:8000";
+const getApiBase = () => {
+  let host = typeof window !== "undefined" ? window.location.hostname : "127.0.0.1";
+  if (!host || host === "localhost") {
+    host = "127.0.0.1";
+  }
+  return `http://${host}:8000`;
+};
 
 export function SessionPanel({ recording, sessionFile }) {
   const [sessions, setSessions] = useState([]);
@@ -14,7 +20,7 @@ export function SessionPanel({ recording, sessionFile }) {
   const fetchSessions = async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${API_BASE}/api/sessions`);
+      const r = await fetch(`${getApiBase()}/api/sessions`);
       setSessions(await r.json());
     } catch {
       // backend unreachable
@@ -29,7 +35,7 @@ export function SessionPanel({ recording, sessionFile }) {
   }, [recording]);
 
   const download = (filename) => {
-    window.open(`${API_BASE}/api/sessions/${filename}`, "_blank");
+    window.open(`${getApiBase()}/api/sessions/${filename}`, "_blank");
   };
 
   const formatSize = (bytes) => {

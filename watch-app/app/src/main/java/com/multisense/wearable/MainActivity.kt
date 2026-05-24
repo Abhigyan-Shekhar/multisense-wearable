@@ -1,9 +1,15 @@
 package com.multisense.wearable
 
+import android.Manifest
 import android.content.Intent
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.MutableState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +34,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.ButtonDefaults
 import androidx.wear.compose.material.MaterialTheme
@@ -40,6 +47,7 @@ private const val PREFS_NAME  = "multisense_prefs"
 private const val KEY_IP      = "server_ip"
 private const val KEY_PORT    = "server_port"
 private const val KEY_DEVICE  = "device_id"
+private const val TAG         = "MainActivity"
 
 /**
  * MainActivity – Wear OS entry point.
@@ -54,17 +62,36 @@ private const val KEY_DEVICE  = "device_id"
  * Galaxy Watch 4's circular 450 × 450 dp display.
  */
 class MainActivity : ComponentActivity() {
+    private lateinit var prefs: SharedPreferences
+    private val streamingState: MutableState<Boolean> = mutableStateOf(false)
+    private var pendingStartRequest: StartRequest? = null
+
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            if (missingRuntimePermissions().isNotEmpty()) {
+                pendingStartRequest = null
+                return@registerForActivityResult
+            }
+
+            pendingStartRequest?.let { request ->
+                if (startSensorService(request.ip, request.port, request.deviceId)) {
+                    persistConnectionSettings(request.ip, request.port, request.deviceId)
+                    streamingState.value = true
+                }
+            }
+            pendingStartRequest = null
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
         setContent {
             var ip       by remember { mutableStateOf(prefs.getString(KEY_IP, "192.168.1.100")!!) }
             var port     by remember { mutableStateOf(prefs.getString(KEY_PORT, "8000")!!) }
             var deviceId by remember { mutableStateOf(prefs.getString(KEY_DEVICE, "galaxy_watch_4")!!) }
-            var streaming by remember { mutableStateOf(false) }
+            val streaming by streamingState
 
             MaterialTheme {
                 Scaffold(timeText = { TimeText() }) {
@@ -119,16 +146,16 @@ class MainActivity : ComponentActivity() {
                             onClick = {
                                 if (streaming) {
                                     stopSensorService()
-                                    streaming = false
+                                    streamingState.value = false
                                 } else {
-                                    val urlOk = startSensorService(ip, port, deviceId)
-                                    if (urlOk) {
-                                        prefs.edit()
-                                            .putString(KEY_IP, ip)
-                                            .putString(KEY_PORT, port)
-                                            .putString(KEY_DEVICE, deviceId)
-                                            .apply()
-                                        streaming = true
+                                    val request = StartRequest(ip = ip, port = port, deviceId = deviceId)
+                                    val missingPermissions = missingRuntimePermissions()
+                                    if (missingPermissions.isNotEmpty()) {
+                                        pendingStartRequest = request
+                                        permissionLauncher.launch(missingPermissions.toTypedArray())
+                                    } else if (startSensorService(ip, port, deviceId)) {
+                                        persistConnectionSettings(ip, port, deviceId)
+                                        streamingState.value = true
                                     }
                                 }
                             }
@@ -161,6 +188,32 @@ class MainActivity : ComponentActivity() {
 
     // ── Service control ───────────────────────────────────────────────────────
 
+    private fun missingRuntimePermissions(): List<String> {
+        val permissions = mutableListOf<String>()
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            permissions += Manifest.permission.ACTIVITY_RECOGNITION
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.BODY_SENSORS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            permissions += Manifest.permission.BODY_SENSORS
+        }
+
+        return permissions
+    }
+
+    private fun persistConnectionSettings(ip: String, port: String, deviceId: String) {
+        prefs.edit()
+            .putString(KEY_IP, ip)
+            .putString(KEY_PORT, port)
+            .putString(KEY_DEVICE, deviceId)
+            .apply()
+    }
+
     /**
      * Validate the address and start [SensorService].
      * Returns false (without starting anything) if the IP is blank or port
@@ -171,14 +224,22 @@ class MainActivity : ComponentActivity() {
         if (ip.isBlank() || portNum == null || portNum !in 1..65535) return false
 
         val url = "ws://${ip.trim()}:$portNum/ws/wearable"
-        startForegroundService(
-            Intent(this, SensorService::class.java).apply {
-                action = ACTION_START
-                putExtra(EXTRA_URL, url)
-                putExtra(EXTRA_DEVICE, deviceId.trim().ifBlank { "galaxy_watch_4" })
-            }
-        )
-        return true
+        return try {
+            startForegroundService(
+                Intent(this, SensorService::class.java).apply {
+                    action = ACTION_START
+                    putExtra(EXTRA_URL, url)
+                    putExtra(EXTRA_DEVICE, deviceId.trim().ifBlank { "galaxy_watch_4" })
+                }
+            )
+            true
+        } catch (e: SecurityException) {
+            Log.e(TAG, "SensorService blocked by foreground-service policy", e)
+            false
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Failed to start SensorService", e)
+            false
+        }
     }
 
     private fun stopSensorService() {
@@ -187,6 +248,12 @@ class MainActivity : ComponentActivity() {
         )
     }
 }
+
+private data class StartRequest(
+    val ip: String,
+    val port: String,
+    val deviceId: String,
+)
 
 // ── Reusable Wear input component ─────────────────────────────────────────────
 

@@ -64,15 +64,16 @@ private const val CHANNEL_ID  = "multisense_sensor_stream"
  *     packet over a persistent WebSocket ([SocketClient]).
  *  4. Auto-reconnects the socket within 2 s on any network failure.
  *
- * Phase 2 scope: motion sensors only (accelerometer + gyroscope).
- * heart_rate and steps fields are present in the payload but set to null.
- * Phase 3 will populate them via the Wear OS Health Services API.
+ * Streams motion sensors continuously and augments each batch with the latest
+ * available heart-rate and session-step values from standard sensor APIs.
  */
 class SensorService : Service() {
 
     private lateinit var sensorManager: SensorManager
     private lateinit var socketClient: SocketClient
     private lateinit var wakeLock: PowerManager.WakeLock
+    private var heartRateSensor: Sensor? = null
+    private var stepCounterSensor: Sensor? = null
 
     // Ring-style buffers — cleared after each flush
     private val accelBuf = ArrayList<FloatArray>(BATCH_SIZE + 4)
@@ -80,6 +81,9 @@ class SensorService : Service() {
     private val tsBuf    = ArrayList<Long>(BATCH_SIZE + 4)
 
     private var deviceId = "galaxy_watch_4"
+    @Volatile private var latestHeartRate: Float? = null
+    @Volatile private var latestSteps: Int? = null
+    private var stepCounterBaseline: Float? = null
 
     /** Cumulative count of motion samples dispatched (for diagnostics). */
     @Volatile private var totalSamplesSent = 0
@@ -91,6 +95,8 @@ class SensorService : Service() {
     override fun onCreate() {
         super.onCreate()
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        heartRateSensor = sensorManager.getDefaultSensor(Sensor.TYPE_HEART_RATE)
+        stepCounterSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         createNotificationChannel()
     }
 
@@ -100,6 +106,9 @@ class SensorService : Service() {
                 val url = intent.getStringExtra(EXTRA_URL)
                     ?: run { Log.e(TAG, "No server URL supplied"); stopSelf(); return START_NOT_STICKY }
                 deviceId = intent.getStringExtra(EXTRA_DEVICE) ?: "galaxy_watch_4"
+                latestHeartRate = null
+                latestSteps = 0
+                stepCounterBaseline = null
 
                 startForeground(NOTIF_ID, buildNotification("Connecting to $url …"))
                 acquireWakeLock()
@@ -146,9 +155,13 @@ class SensorService : Service() {
 
         if (accel == null) Log.e(TAG, "Accelerometer not found on this device!")
         if (gyro  == null) Log.w(TAG, "Gyroscope not found – gyro fields will be zero")
+        if (heartRateSensor == null) Log.w(TAG, "Heart rate sensor unavailable")
+        if (stepCounterSensor == null) Log.w(TAG, "Step counter sensor unavailable")
 
         accel?.let { sensorManager.registerListener(sensorListener, it, SAMPLING_PERIOD_US, handler) }
         gyro?.let  { sensorManager.registerListener(sensorListener, it, SAMPLING_PERIOD_US, handler) }
+        heartRateSensor?.let { sensorManager.registerListener(sensorListener, it, SAMPLING_PERIOD_US, handler) }
+        stepCounterSensor?.let { sensorManager.registerListener(sensorListener, it, SAMPLING_PERIOD_US, handler) }
 
         Log.i(TAG, "Sensors registered at ${1_000_000 / SAMPLING_PERIOD_US} Hz target, batch=$BATCH_SIZE")
     }
@@ -180,6 +193,22 @@ class SensorService : Service() {
                 }
                 Sensor.TYPE_GYROSCOPE -> {
                     gyroBuf.add(event.values.clone())
+                }
+                Sensor.TYPE_HEART_RATE -> {
+                    val bpm = event.values.firstOrNull()
+                    if (event.accuracy != SensorManager.SENSOR_STATUS_UNRELIABLE && bpm != null && bpm > 0f) {
+                        latestHeartRate = bpm
+                    }
+                }
+                Sensor.TYPE_STEP_COUNTER -> {
+                    val totalSteps = event.values.firstOrNull() ?: return
+                    val baseline = stepCounterBaseline
+                    if (baseline == null || totalSteps < baseline) {
+                        stepCounterBaseline = totalSteps
+                        latestSteps = 0
+                    } else {
+                        latestSteps = (totalSteps - baseline).toInt().coerceAtLeast(0)
+                    }
                 }
             }
 
@@ -226,8 +255,8 @@ class SensorService : Service() {
         val payload = JSONObject()
             .put("device_id",   deviceId)
             .put("phase",       "live")          // Phase 3 will set activity type
-            .put("heart_rate",  JSONObject.NULL)  // Phase 3: Health Services
-            .put("steps",       JSONObject.NULL)  // Phase 3: Health Services
+            .put("heart_rate",  latestHeartRate?.round1() ?: JSONObject.NULL)
+            .put("steps",       latestSteps ?: JSONObject.NULL)
             .put("motion",      motionArray)
 
         val sent = socketClient.send(payload.toString())
@@ -246,6 +275,7 @@ class SensorService : Service() {
 
     /** Round to 4 decimal places to keep JSON payload compact. */
     private fun Float.round4(): Double = (this.toDouble() * 10_000).toLong() / 10_000.0
+    private fun Float.round1(): Double = (this.toDouble() * 10).toLong() / 10.0
 
     // ── Notification helpers ──────────────────────────────────────────────────
 

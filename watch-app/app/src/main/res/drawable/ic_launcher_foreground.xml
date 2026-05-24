@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher icon foreground: waveform / sensor pulse symbol in cyan -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Sensor waveform path, centred in the safe zone (18dp inset each side) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#22D3EE"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="
+            M18,54
+            L30,54
+            L36,36
+            L42,72
+            L48,44
+            L54,64
+            L60,54
+            L72,54
+            L78,42
+            L84,66
+            L90,54" />
+</vector>
