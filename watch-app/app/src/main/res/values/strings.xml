@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">MultiSense</string>
+    <string name="start_streaming">Start</string>
+    <string name="stop_streaming">Stop</string>
+    <string name="status_streaming">Streaming</string>
+    <string name="status_idle">Idle</string>
+    <string name="notif_channel_name">Sensor Stream</string>
+    <string name="notif_channel_desc">Active while MultiSense is streaming sensor data</string>
+</resources>
