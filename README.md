@@ -1,156 +1,282 @@
 # MultiSense Wearable System
 
-A real-time sensor streaming system for **Samsung Galaxy Watch 4** (Wear OS 3) with a live web dashboard. This repository contains the source code for the Wear OS watch application (`watch-app`), the FastAPI WebSocket ingestion server (`backend`), the Vite+React visualization dashboard (`dashboard`), and a synthetic telemetry generator (`scratch/sensor_simulator.py`).
+Real-time wearable telemetry pipeline for a Samsung Galaxy Watch running Wear OS, a FastAPI ingestion/broadcast backend, and a React dashboard for live visualization and session logging.
 
----
+## What This Repo Does
 
-## System Architecture & Phased Roadmap
+This project streams live watch telemetry to a local backend and visualizes it in a browser.
 
-To ensure reliable, battery-efficient, and continuous operation, the system is designed around a multi-phase engineering plan:
+Current end-to-end flow:
 
-1. **Phase 1 (Complete):** Local simulation framework. FastAPI WebSocket server, React dashboard, and synthetic Python client generating 20 Hz IMU and 1 Hz health data.
-2. **Phase 2 (Complete):** Native Wear OS 3 application. Implements a foreground `SensorService` with a CPU wake lock, sampling raw Accelerometer and Gyroscope at 20 Hz, batching into 20-sample packets (1 Hz packet transmission), and streaming directly over WebSocket with auto-reconnect.
-3. **Phase 3 (Planned):** Health services integration. Replacing synthetic heart rate and step stubs in the Wear OS payload with real-time data from Wear Health Services.
-4. **Phase 4 (Planned - Target Production Architecture):** Watch-to-Phone Companion architecture. Offloading network traffic by transmitting data from Watch → Phone via the **Wearable Data Layer API** (Bluetooth), with the companion phone app forwarding telemetry to the server. This reduces watch battery drain and increases connection robustness.
+1. The Wear OS app collects accelerometer, gyroscope, heart rate, and step-counter data.
+2. The watch batches motion samples into JSON packets and sends them over WebSocket.
+3. The FastAPI backend receives those packets on `/ws/wearable`.
+4. The backend optionally records packets to `sessions/session_<timestamp>.jsonl`.
+5. The backend rebroadcasts live telemetry to dashboard clients on `/ws/dashboard`.
+6. The React dashboard renders live charts, metric cards, connection status, and saved session logs.
 
----
+There is also a Python simulator in `scratch/` that can generate synthetic telemetry without a physical watch.
+
+## Current Pipeline
+
+```text
+Galaxy Watch / Simulator
+        |
+        |  WebSocket JSON packets
+        v
+FastAPI backend (port 8000)
+  - /ws/wearable   ingest stream
+  - /ws/dashboard  fan-out to UI
+  - /api/sessions  list logs
+  - /api/sessions/{file} download logs
+        |
+        v
+React dashboard (port 5173)
+  - live motion charts
+  - heart-rate / steps cards
+  - recording controls
+  - session log browser
+```
+
+## What's Implemented
+
+### Backend
+
+`backend/main.py` currently provides:
+
+- FastAPI app with permissive CORS for local development
+- WebSocket ingestion endpoint at `/ws/wearable`
+- WebSocket dashboard subscription endpoint at `/ws/dashboard`
+- Live fan-out to multiple dashboard clients
+- Session recording control via dashboard messages:
+  - `start_recording`
+  - `stop_recording`
+- JSONL session persistence under `sessions/`
+- REST endpoints to list and download session logs
+- `/health` endpoint for a lightweight health check
+- Server-side timestamp injection when `server_ts` is missing
+- Malformed JSON frame rejection without killing the stream
+
+### Dashboard
+
+`dashboard/` is a Vite + React app using Recharts.
+
+Implemented UI/features:
+
+- Connection badge with reconnect state
+- Record / stop toggle wired to backend control messages
+- Heart-rate card
+- Step-count card
+- Activity phase card
+- Session timer card
+- Live accelerometer chart
+- Live gyroscope chart
+- Latest packet summary table
+- Session log panel with refresh and download actions
+- Automatic WebSocket reconnect handling in `src/useWearableStream.js`
+- Cleanup-safe refresh/unmount behavior for the dashboard socket
+
+### Watch App
+
+`watch-app/` is a native Kotlin Wear OS app.
+
+Implemented app behavior:
+
+- Jetpack Compose UI for:
+  - server IP
+  - server port
+  - device ID
+  - Start / Stop streaming
+- Foreground `SensorService`
+- `PARTIAL_WAKE_LOCK` to keep sampling alive with screen off
+- Accelerometer streaming
+- Gyroscope streaming
+- Heart-rate sensor integration using `TYPE_HEART_RATE`
+- Step-counter integration using `TYPE_STEP_COUNTER`
+- Session-relative step calculation from a baseline
+- Motion batching at 20 samples per packet
+- OkHttp WebSocket client with reconnect loop
+- Runtime permission handling for:
+  - `ACTIVITY_RECOGNITION`
+  - `BODY_SENSORS`
+- Manifest support for:
+  - foreground data sync service
+  - cleartext local-network traffic
+  - body sensor access
+
+### Simulator
+
+`scratch/sensor_simulator.py` supports:
+
+- synthetic motion generation at 20 Hz
+- batched packet sends every second
+- synthetic heart rate and step counts
+- multiple activity phases:
+  - `rest`
+  - `walk`
+  - `run`
+- automatic reconnect on backend disconnect
 
 ## Repository Layout
 
-```
-multisense-wearable/
-├── backend/                  # FastAPI WebSocket Server
-│   ├── main.py               # WS endpoints & session logger
-│   └── requirements.txt      # Python dependencies (fastapi, uvicorn, websockets)
-├── dashboard/                # Vite + React Visualization Dashboard
-│   ├── src/
-│   │   ├── App.jsx           # UI layout, charts, and BPM cards
-│   │   ├── useWearableStream.js # WS connection hook with auto-reconnect
-│   │   ├── SessionPanel.jsx  # Logs management panel
-│   │   └── index.css         # Dark-themed styling
-│   └── package.json
-├── watch-app/                # Native Wear OS 3 App (Kotlin)
-│   ├── app/
-│   │   ├── src/main/
-│   │   │   ├── AndroidManifest.xml # Permissions (BODY_SENSORS, FOREGROUND_SERVICE, WAKE_LOCK, INTERNET)
-│   │   │   └── java/com/multisense/wearable/
-│   │   │       ├── MainActivity.kt # Compose UI for server configuration & control
-│   │   │       ├── SensorService.kt # Foreground service for 20 Hz sensor sampling
-│   │   │       └── SocketClient.kt # OkHttp WebSocket client with 2s reconnection
-│   └── build.gradle.kts
+```text
+ODU internship - watch/
+├── backend/
+│   ├── main.py
+│   └── requirements.txt
+├── dashboard/
+│   ├── package.json
+│   └── src/
+│       ├── App.jsx
+│       ├── SessionPanel.jsx
+│       ├── useWearableStream.js
+│       ├── App.css
+│       └── index.css
+├── watch-app/
+│   ├── DEPLOY.md
+│   ├── build.gradle.kts
+│   └── app/src/main/
+│       ├── AndroidManifest.xml
+│       └── java/com/multisense/wearable/
+│           ├── MainActivity.kt
+│           ├── SensorService.kt
+│           └── SocketClient.kt
 ├── scratch/
-│   └── sensor_simulator.py   # 20 Hz Accel/Gyro synthetic generator
-└── sessions/                 # Directory auto-created by backend to store JSONL logs
+│   ├── sensor_simulator.py
+│   └── test_ws.py
+└── sessions/
 ```
 
----
+## Data Shape
 
-## Measurable Engineering Specifications
+The stream payloads currently look like this:
 
-The system is developed and benchmarked against the following strict parameters:
-
-| Metric | Target Specification | Status |
-|--------|----------------------|--------|
-| **UI End-to-End Latency** | ≤ 250 ms | Verified (Phase 1 & 2) |
-| **IMU Sample Rate** | 20 Hz (50 ms inter-sample period) | Verified (Phase 1 & 2) |
-| **Packet Batching** | 20 samples per packet (1 packet/sec) | Verified (Phase 1 & 2) |
-| **Socket Reconnection** | Auto-reconnect within 2.0 seconds | Verified (Phase 1 & 2) |
-| **Continuous Recording** | ≥ 30 minutes without dropouts | Verified (Phase 1 & 2 Simulator) |
-| **Session Format** | JSON Lines (JSONL), one JSON per line | Verified (Phase 1 & 2) |
-| **Watch Battery Drain** | < 8% per 30 minutes (Active Wi-Fi, 20 Hz) | Target for Phase 2 device validation |
-
----
-
-## Setup & Startup Instructions
-
-### 1. Ingestion Backend
-1. Initialize the Python virtual environment and install dependencies:
-   ```bash
-   cd backend
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
-   ```
-2. Start the Uvicorn server:
-   ```bash
-   uvicorn main:app --reload --host 0.0.0.0 --port 8000
-   ```
-   *The backend is live at `http://localhost:8000`. WebSocket endpoints are located at `/ws/wearable` (ingestion) and `/ws/dashboard` (broadcast).*
-
-### 2. React Web Dashboard
-1. Install Node modules and run the development server:
-   ```bash
-   cd dashboard
-   npm install
-   npm run dev
-   ```
-2. Open `http://localhost:5173` in your browser to view the real-time plots, BPM cards, and session log history.
-
-### 3. Running the Simulator (Alternative to Real Watch)
-If you do not have a physical watch connected, run the simulator script to stream high-fidelity synthetic data:
-```bash
-python scratch/sensor_simulator.py --phase walk
-```
-*Supported phases: `rest` | `walk` | `run` (adjusts Accel/Gyro frequencies and average BPM).*
-
----
-
-## Phase 2: Wear OS App Deployment Guide
-
-The native Android app targets modern Wear OS (SDK 34) while maintaining backward compatibility with Galaxy Watch 4 using `minSdk 30`.
-
-### Prerequisites
-- **Android Studio** (2023.x or newer recommended).
-- **Android SDK 34** installed via SDK Manager (`Tools → SDK Manager`) for development, with `minSdk=30` in the build configuration for Galaxy Watch 4 compatibility.
-- **Galaxy Watch 4** connected to the same Wi-Fi network as your workstation.
-
-### Step-by-Step Deployment
-1. **Enable Developer Options on Watch:**
-   - On the watch, navigate to `Settings → About Watch → Software Info`.
-   - Tap `Software Version` 7 times until a toast reads "Developer mode turned on".
-   - Go back to `Settings → Developer Options`.
-   - Enable **ADB Debugging** and **Wireless Debugging**.
-   
-2. **Establish ADB Wi-Fi Connection:**
-   - Under `Settings → Developer Options → Wireless Debugging`, note the IP address and Port (e.g., `192.168.1.50:5555`).
-   - Open a terminal on your workstation and connect using adb (located in `~/Library/Android/sdk/platform-tools/` on macOS by default):
-     ```bash
-     adb connect <WATCH_IP>:<PORT>
-     adb devices
-     ```
-   - Approve the workstation connection prompt on your watch face.
-
-3. **Build and Install:**
-   - Open the `/watch-app` subdirectory in Android Studio.
-   - Wait for the Gradle sync to complete.
-   - Select the connected watch from the device dropdown list and click **Run (▶)**.
-   - Alternatively, build and install via CLI:
-     ```bash
-     cd watch-app
-     ./gradlew installDebug
-     ```
-
-4. **App Configuration & Streaming:**
-   - Open the **MultiSense** app on the watch.
-   - Input your workstation's local IP address (e.g., `192.168.1.10`), Port `8000`, and a custom Device ID.
-   - Tap **Start** to begin streaming. A persistent foreground notification indicating "Streaming ● <device_id> → server" will appear.
-   - Raw motion data will stream immediately to the dashboard.
-
----
-
-## Session Logs & Data Verification
-- **Log Location:** All streaming sessions are saved under `sessions/session_<timestamp>.jsonl`.
-- **Formatting:** Each line is a valid JSON object matching the format:
-  ```json
-  {
-    "device_id": "galaxy_watch_4",
-    "timestamp": 1716534958123,
-    "sensors": {
-      "accelerometer": [{"x": 0.12, "y": 9.81, "z": -0.45, "t": 1716534958000}],
-      "gyroscope": [{"x": -0.01, "y": 0.02, "z": 0.00, "t": 1716534958000}],
-      "heart_rate": 78,
-      "steps": 1420
+```json
+{
+  "device_id": "galaxy_watch_4",
+  "phase": "live",
+  "heart_rate": 78.4,
+  "steps": 125,
+  "motion": [
+    {
+      "ts": 1716534958000,
+      "accel": { "x": 0.12, "y": 9.81, "z": -0.45 },
+      "gyro": { "x": -0.01, "y": 0.02, "z": 0.00 }
     }
-  }
-  ```
-- Logs can be managed and downloaded directly through the dashboard UI.
+  ]
+}
+```
+
+When the backend receives a packet, it adds `server_ts` if the client did not send one.
+
+## Setup
+
+### 1. Backend
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Backend endpoints:
+
+- `ws://localhost:8000/ws/wearable`
+- `ws://localhost:8000/ws/dashboard`
+- `http://localhost:8000/api/sessions`
+- `http://localhost:8000/health`
+
+### 2. Dashboard
+
+```bash
+cd dashboard
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`.
+
+The dashboard auto-targets `127.0.0.1:8000` when running locally.
+
+### 3. Simulator
+
+Run this if you want to test the full pipeline without the watch:
+
+```bash
+cd scratch
+python3 sensor_simulator.py --phase walk
+```
+
+Examples:
+
+```bash
+python3 sensor_simulator.py --phase rest
+python3 sensor_simulator.py --phase walk
+python3 sensor_simulator.py --phase run
+```
+
+### 4. Watch App
+
+Detailed deployment steps are in [watch-app/DEPLOY.md](/Users/abhigyanshekhar/Desktop/ODU%20internship%20-%20watch/watch-app/DEPLOY.md).
+
+Quick start:
+
+1. Open `watch-app/` in Android Studio.
+2. Connect the Galaxy Watch on the same network.
+3. Run/install the debug build.
+4. In the app, set:
+   - backend IP
+   - port `8000`
+   - device ID
+5. Tap `Start`.
+
+## Versions and Stack
+
+- Backend: FastAPI, Uvicorn, websockets
+- Dashboard: React 19, Vite 8, Recharts
+- Watch app: Kotlin, Jetpack Compose for Wear, OkHttp, Coroutines
+- Android target: `compileSdk 34`, `targetSdk 34`, `minSdk 30`
+- Java/Kotlin target: 17
+
+## Recent Completed Work
+
+The repository now reflects these completed items:
+
+- real watch-side heart-rate streaming
+- real watch-side step streaming
+- runtime permission requests for motion/body sensors
+- session log recording from the dashboard
+- session log listing and download APIs
+- safer dashboard WebSocket teardown on refresh/unmount
+- defensive watch foreground-service startup
+- `dataSync` foreground service type in the manifest
+- cleartext LAN support for local backend connections
+
+## Known Constraints
+
+- The backend is configured for local-network development and allows broad CORS.
+- The watch app currently sends directly to the backend over LAN WebSocket.
+- Session logs are stored as JSONL on the backend filesystem.
+- The dashboard expects the backend on port `8000` unless you change the code.
+- The project does not yet implement phone-companion relay, cloud storage, or model inference in this repo.
+
+## Validation Commands
+
+Useful local checks:
+
+```bash
+cd backend && source .venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+cd dashboard && npm run build
+cd watch-app && ./gradlew :app:assembleDebug
+cd scratch && python3 sensor_simulator.py --phase walk
+```
+
+## Next Likely Enhancements
+
+- configurable backend host/port for the dashboard
+- richer session playback from saved JSONL logs
+- stronger packet/schema validation
+- phone companion transport for better watch battery life
+- downstream inference pipeline on recorded/live sessions
