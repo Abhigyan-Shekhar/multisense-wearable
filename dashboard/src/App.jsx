@@ -146,6 +146,8 @@ export default function App() {
   const steps = latestFrame?.steps ?? null;
   const phase = latestFrame?.phase ?? null;
   const deviceId = latestFrame?.device_id ?? null;
+  const audio = latestFrame?.audio ?? null;
+  const audioFeatures = audio?.features ?? null;
 
   const ACCEL_LINES = [
     { key: "ax", color: "#3b82f6", label: "X" },
@@ -228,6 +230,30 @@ export default function App() {
             </div>
           </div>
 
+          <div
+            className="card"
+            style={{
+              borderColor: audio?.agitated ? "#7f1d1d" : "var(--border)",
+              background: audio?.agitated
+                ? "linear-gradient(180deg, rgba(127,29,29,0.35), rgba(15,23,42,0.92))"
+                : undefined,
+            }}
+          >
+            <div className="card-label">🎤 Voice Check</div>
+            <div
+              className="card-value"
+              style={{
+                fontSize: 20,
+                color: audio?.agitated ? "#fda4af" : "var(--text-primary)",
+              }}
+            >
+              {audio ? (audio.agitated ? "Agitated" : "Calm") : "No sample"}
+            </div>
+            <div className="card-subtext">
+              {audio?.summary ?? "Trigger a voice check from the watch."}
+            </div>
+          </div>
+
           <div className="card">
             <div className="card-label">⏱ Session Timer</div>
             <div
@@ -252,6 +278,24 @@ export default function App() {
 
         {/* Charts */}
         <main className="content">
+          {audio?.agitated && (
+            <div
+              className="card"
+              style={{
+                marginBottom: 16,
+                borderColor: "#7f1d1d",
+                background: "linear-gradient(90deg, rgba(127,29,29,0.55), rgba(15,23,42,0.95))",
+              }}
+            >
+              <div className="card-label" style={{ color: "#fda4af" }}>
+                Patient Agitation Flag
+              </div>
+              <div style={{ color: "var(--text-primary)", fontSize: 14 }}>
+                {audio.summary}
+              </div>
+            </div>
+          )}
+
           {history.length === 0 && (
             <div
               style={{
@@ -314,6 +358,21 @@ export default function App() {
                       ["Heart Rate", bpm !== null ? `${bpm} BPM` : "—"],
                       ["Steps", steps !== null ? steps : "—"],
                       ["Phase", phase ?? "—"],
+                      ["Voice Risk", audio?.risk_level ?? "—"],
+                      ["Recognizer", audio?.recognition_mode ?? "—"],
+                      ["Speech Ratio", audioFeatures ? audioFeatures.speech_ratio?.toFixed(2) : "—"],
+                      ["RMS Energy", audioFeatures ? audioFeatures.rms_energy?.toFixed(3) : "—"],
+                      ["ZCR", audioFeatures ? audioFeatures.zero_crossing_rate?.toFixed(3) : "—"],
+                      [
+                        "Cursing",
+                        audio?.cursing_detected == null
+                          ? "Not available"
+                          : audio?.cursing_detected
+                          ? "Detected"
+                          : "Not detected",
+                      ],
+                      ["Flagged Phrase", audio?.flagged_phrase ?? "—"],
+                      ["Transcript", audio?.transcript ?? "—"],
                       ["Device", deviceId ?? "—"],
                       [
                         "Last Accel",
